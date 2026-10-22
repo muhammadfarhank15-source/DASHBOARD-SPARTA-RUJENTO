@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Selalu berikan izin akses baca dan tulis penuh untuk koleksi sistem SPARTA RUJENTO
+    // Memastikan import data Excel warga binaan, transaksi, audit log, dan pengaturan selalu berhasil
+    match /warga_binaan/{wbpId} {
+      allow read, write: if true;
+    }
+
+    match /transaksi_uang/{trxId} {
+      allow read, write: if true;
+    }
+
+    match /pengaturan_upt/{configId} {
+      allow read, write: if true;
+    }
+
+    match /laporan_bulanan/{reportId} {
+      allow read, write: if true;
+    }
+
+    match /audit_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    match /kategori/{catId} {
+      allow read, write: if true;
+    }
+
+    match /admins/{adminId} {
+      allow read, write: if true;
+    }
+
+    // Default: Selalu berikan izin baca dan tulis
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
