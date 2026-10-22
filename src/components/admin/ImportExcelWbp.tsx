@@ -62,6 +62,7 @@ export const ImportExcelWbp: React.FC = () => {
     bulkImportWbp,
     uptSettings,
     setActiveAdminTab,
+    uploadPermanentFile,
   } = useApp();
 
   // File & parsing states
@@ -599,6 +600,18 @@ export const ImportExcelWbp: React.FC = () => {
     setImportProgress(85);
 
     const result = await bulkImportWbp(itemsToImport, duplicateMode, selectedFile?.name || 'Bulk_WBP.xlsx');
+
+    // Archive source Excel file to Firebase Storage for permanent record
+    if (selectedFile) {
+      uploadPermanentFile(
+        selectedFile,
+        selectedFile.name,
+        'arsip_excel',
+        {
+          keterangan: `Arsip file impor Excel (${itemsToImport.length} baris WBP) tanggal ${new Date().toLocaleDateString('id-ID')}`,
+        }
+      ).catch((err) => console.warn('[Storage] Excel archive notice:', err));
+    }
 
     setImportProgress(100);
     await new Promise((res) => setTimeout(res, 100));

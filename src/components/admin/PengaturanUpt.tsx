@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { OfficialLogo } from '../common/OfficialLogo';
+import { PasswordInput } from '../common/PasswordInput';
 
 export const PengaturanUpt: React.FC = () => {
   const {
@@ -26,7 +27,10 @@ export const PengaturanUpt: React.FC = () => {
     setFormDraft,
     clearFormDraft,
     autosaveState,
+    uploadPermanentFile,
   } = useApp();
+
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   // UPT Identity Form State
   const [formData, setFormData] = useState({
@@ -89,23 +93,33 @@ export const PengaturanUpt: React.FC = () => {
   const [publicMsg, setPublicMsg] = useState<string | null>(null);
   const [isSavingPublic, setIsSavingPublic] = useState(false);
 
-  // Handle Logo Upload (Base64)
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Logo Upload (Firebase Storage Permanent)
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      setIdentityMsg({ type: 'error', text: 'Ukuran file gambar logo maksimal 2MB.' });
+    if (file.size > 5 * 1024 * 1024) {
+      setIdentityMsg({ type: 'error', text: 'Ukuran file gambar logo maksimal 5MB.' });
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64Str = reader.result as string;
-      handleFieldChange('logoUrl', base64Str);
-      setIdentityMsg({ type: 'success', text: 'File logo berhasil dimuat. Klik Simpan Identitas UPT untuk menyimpan permanen ke Firestore.' });
-    };
-    reader.readAsDataURL(file);
+    setIsUploadingLogo(true);
+    setIdentityMsg(null);
+    try {
+      const res = await uploadPermanentFile(file, file.name, 'logo_upt', {
+        keterangan: `Logo resmi ${formData.namaUpt}`,
+      });
+      handleFieldChange('logoUrl', res.urlPenyimpanan);
+      setIdentityMsg({
+        type: 'success',
+        text: 'Logo resmi berhasil diunggah permanen ke Firebase Storage! Klik Simpan Identitas UPT untuk menyimpan pembaruan.',
+      });
+    } catch (err: any) {
+      setIdentityMsg({ type: 'error', text: `Gagal mengunggah logo ke Firebase Storage: ${err?.message}` });
+    } finally {
+      setIsUploadingLogo(false);
+      e.target.value = '';
+    }
   };
 
   const handleSaveIdentity = async (e: React.FormEvent) => {
@@ -473,12 +487,13 @@ export const PengaturanUpt: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Kata Sandi Lama:
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={oldPassword}
                   onChange={(e) => setOldPassword(e.target.value)}
                   placeholder="Masukkan kata sandi lama..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                  className="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
+                  buttonClassName="hover:bg-slate-100"
+                  iconClassName="text-slate-600"
                   required
                 />
               </div>
@@ -487,12 +502,14 @@ export const PengaturanUpt: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Kata Sandi Baru (Min. 6 Karakter):
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="Masukkan kata sandi baru..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                  className="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
+                  buttonClassName="hover:bg-slate-100"
+                  iconClassName="text-slate-600"
+                  minLength={6}
                   required
                 />
               </div>
@@ -501,12 +518,14 @@ export const PengaturanUpt: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Ulangi Kata Sandi Baru:
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Ketik ulang kata sandi baru..."
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs"
+                  className="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
+                  buttonClassName="hover:bg-slate-100"
+                  iconClassName="text-slate-600"
+                  minLength={6}
                   required
                 />
               </div>

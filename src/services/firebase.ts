@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 import firebaseConfigJson from '@/firebase-applet-config.json';
 
@@ -27,6 +28,9 @@ export const db = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestor
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// Initialize Firebase Storage for permanent file storage
+export const storage = getStorage(app);
 
 export enum OperationType {
   CREATE = 'create',

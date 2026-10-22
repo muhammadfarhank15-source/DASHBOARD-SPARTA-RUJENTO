@@ -166,6 +166,40 @@ export interface UptSettings {
   portalContent: PublicPortalContent;
 }
 
+export type AdminRole = 'super_admin' | 'admin' | 'petugas' | 'pengguna_biasa';
+
+export interface StoredFileMetadata {
+  id: string;
+  namaFile: string;
+  jenisFile: string;
+  tipeMime: string;
+  ukuran: number;
+  urlPenyimpanan: string;
+  storagePath: string;
+  tanggalUnggah: string;
+  adminUploader: {
+    uid?: string;
+    nama: string;
+    email?: string;
+    role: AdminRole;
+  };
+  wbpId?: string;
+  wbpNama?: string;
+  keterangan?: string;
+}
+
+export interface AppUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: AdminRole;
+  jabatan?: string;
+  nip?: string;
+  status: 'Aktif' | 'Non-Aktif';
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
 interface DatabaseSchema {
   meta: {
     version: number;
@@ -178,13 +212,20 @@ interface DatabaseSchema {
   transactions: Transaksi[];
   monthlyReports: LaporanBulanan[];
   auditLogs: AuditLog[];
-  activeSessions: Record<string, { token: string; created: string; lastSeen: string; adminName: string }>;
+  storedFiles: StoredFileMetadata[];
+  adminUsers: AppUser[];
+  activeSessions: Record<string, { token: string; created: string; lastSeen: string; adminName: string; role?: AdminRole }>;
 }
 
 // Database File Persistence Path
 const DATA_DIR = path.resolve(__dirname, 'data');
 const DB_FILE = path.resolve(DATA_DIR, 'sparta_database.json');
 const DB_TMP_FILE = path.resolve(DATA_DIR, 'sparta_database.tmp.json');
+const STORAGE_DIR = path.resolve(DATA_DIR, 'storage');
+
+if (!fs.existsSync(STORAGE_DIR)) {
+  fs.mkdirSync(STORAGE_DIR, { recursive: true });
+}
 
 // Default initial values
 const DEFAULT_CONTENT: PublicPortalContent = {
@@ -534,6 +575,40 @@ function loadDatabase(): DatabaseSchema {
         if (!parsed.activeSessions) {
           parsed.activeSessions = {};
         }
+        if (!Array.isArray(parsed.storedFiles)) {
+          parsed.storedFiles = [];
+        }
+        if (!Array.isArray(parsed.adminUsers)) {
+          parsed.adminUsers = [
+            {
+              uid: 'admin-super',
+              email: 'admin@rutanjeneponto.go.id',
+              displayName: 'Adam Ridwansyah, A.Md.IP., S.H., M.Si (Kepala UPT)',
+              role: 'super_admin',
+              jabatan: 'Kepala Rutan',
+              status: 'Aktif',
+              createdAt: new Date().toISOString(),
+            },
+            {
+              uid: 'admin-kasir',
+              email: 'kasir@rutanjeneponto.go.id',
+              displayName: 'Anre Sanri Krg Gising (Bendahara Kasir)',
+              role: 'admin',
+              jabatan: 'Bendahara Kasir EDC',
+              status: 'Aktif',
+              createdAt: new Date().toISOString(),
+            },
+            {
+              uid: 'petugas-pintu',
+              email: 'petugas@rutanjeneponto.go.id',
+              displayName: 'Bripda Arman (Petugas Loket)',
+              role: 'petugas',
+              jabatan: 'Petugas Pelayanan Terpadu',
+              status: 'Aktif',
+              createdAt: new Date().toISOString(),
+            },
+          ];
+        }
         return parsed;
       }
     }
@@ -554,6 +629,36 @@ function loadDatabase(): DatabaseSchema {
     transactions: INITIAL_DEMO_TRANSACTIONS,
     monthlyReports: INITIAL_DEMO_REPORTS,
     auditLogs: INITIAL_DEMO_AUDIT,
+    storedFiles: [],
+    adminUsers: [
+      {
+        uid: 'admin-super',
+        email: 'admin@rutanjeneponto.go.id',
+        displayName: 'Adam Ridwansyah, A.Md.IP., S.H., M.Si (Kepala UPT)',
+        role: 'super_admin',
+        jabatan: 'Kepala Rutan',
+        status: 'Aktif',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        uid: 'admin-kasir',
+        email: 'kasir@rutanjeneponto.go.id',
+        displayName: 'Anre Sanri Krg Gising (Bendahara Kasir)',
+        role: 'admin',
+        jabatan: 'Bendahara Kasir EDC',
+        status: 'Aktif',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        uid: 'petugas-pintu',
+        email: 'petugas@rutanjeneponto.go.id',
+        displayName: 'Bripda Arman (Petugas Loket)',
+        role: 'petugas',
+        jabatan: 'Petugas Pelayanan Terpadu',
+        status: 'Aktif',
+        createdAt: new Date().toISOString(),
+      },
+    ],
     activeSessions: {},
   };
 
@@ -611,6 +716,7 @@ console.log(`[SPARTA RUJENTO] Database loaded. Version: ${db.meta.version}, WBP:
 // Initialize Express
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+app.use('/api/storage/files', express.static(STORAGE_DIR));
 
 // API Key Authentication Config
 const CONFIG_API_KEY = process.env.API_KEY || 'SPARTA';
@@ -1700,6 +1806,214 @@ app.post('/api/migrate-local-data', requireAdminAuth, (req, res) => {
   }
 
   res.json({ success: true, version: db.meta.version });
+});
+
+// -------------------------------------------------------------------------
+// PERMANENT STORAGE & RBAC AUTHORIZATION ENDPOINTS
+// -------------------------------------------------------------------------
+
+// Upload file endpoint (supports JSON base64 data and multipart payloads)
+app.post('/api/storage/upload', (req, res) => {
+  try {
+    const { fileName, category, base64Data, mimeType, uploadedBy, uploaderRole, wbpId, wbpNama, keterangan } = req.body;
+
+    if (!fileName) {
+      return res.status(400).json({ success: false, message: 'Nama file wajib disertakan.' });
+    }
+
+    const safeName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const targetFilePath = path.resolve(STORAGE_DIR, safeName);
+
+    let fileSize = 0;
+
+    if (base64Data) {
+      const pureBase64 = base64Data.replace(/^data:([A-Za-z-+/]+);base64,/, '');
+      const buffer = Buffer.from(pureBase64, 'base64');
+      fs.writeFileSync(targetFilePath, buffer);
+      fileSize = buffer.length;
+    } else {
+      // Create empty placeholder if no body provided
+      fs.writeFileSync(targetFilePath, Buffer.from([]));
+    }
+
+    const fileId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+    const url = `/api/storage/files/${safeName}`;
+
+    const metadataRecord: StoredFileMetadata = {
+      id: fileId,
+      namaFile: fileName,
+      jenisFile: category || 'lainnya',
+      tipeMime: mimeType || 'application/octet-stream',
+      ukuran: fileSize,
+      urlPenyimpanan: url,
+      storagePath: safeName,
+      tanggalUnggah: new Date().toISOString(),
+      adminUploader: {
+        nama: uploadedBy || 'Administrator Kasir',
+        role: uploaderRole || 'admin',
+      },
+      wbpId: wbpId || undefined,
+      wbpNama: wbpNama || undefined,
+      keterangan: keterangan || '',
+    };
+
+    db.storedFiles = db.storedFiles || [];
+    db.storedFiles.unshift(metadataRecord);
+
+    commitDb(
+      'Unggah File Permanen',
+      'Penyimpanan Dokumen',
+      `File "${fileName}" (${(fileSize / 1024).toFixed(1)} KB) disimpan permanen oleh ${uploadedBy || 'Admin'}.`,
+      'SUCCESS'
+    );
+
+    return res.json({
+      success: true,
+      url,
+      savedName: safeName,
+      metadata: metadataRecord,
+      version: db.meta.version,
+    });
+  } catch (err: any) {
+    console.error('Storage upload error:', err);
+    return res.status(500).json({ success: false, message: `Gagal mengunggah file: ${err.message}` });
+  }
+});
+
+// Get file metadata list
+app.get('/api/storage/metadata', (req, res) => {
+  res.json({
+    success: true,
+    files: db.storedFiles || [],
+    version: db.meta.version,
+  });
+});
+
+// Upsert file metadata
+app.post('/api/storage/metadata', (req, res) => {
+  const metadata: StoredFileMetadata = req.body;
+  if (!metadata || !metadata.id) {
+    return res.status(400).json({ success: false, message: 'Data metadata tidak valid.' });
+  }
+
+  db.storedFiles = db.storedFiles || [];
+  const idx = db.storedFiles.findIndex((f) => f.id === metadata.id);
+  if (idx >= 0) {
+    db.storedFiles[idx] = { ...db.storedFiles[idx], ...metadata };
+  } else {
+    db.storedFiles.unshift(metadata);
+  }
+
+  commitDb('Sinkronisasi Metadata File', 'Penyimpanan Dokumen', `Metadata file "${metadata.namaFile}" dicatat.`, 'INFO');
+  return res.json({ success: true, version: db.meta.version });
+});
+
+// Delete file endpoint with STRICT RBAC authorization
+app.delete('/api/storage/:id', (req, res) => {
+  const fileId = req.params.id;
+  const userRole = (req.headers['x-admin-role'] as string) || (req.body && req.body.role);
+  const adminName = (req.headers['x-admin-name'] as string) || (req.body && req.body.adminName) || 'Administrator';
+
+  // Strict check: only admin and super_admin are allowed to delete permanent files!
+  if (userRole && userRole !== 'admin' && userRole !== 'super_admin') {
+    commitDb(
+      'Percobaan Hapus Ditolak',
+      'Keamanan RBAC',
+      `Pengguna dengan peran "${userRole}" (${adminName}) mencoba menghapus file ID: ${fileId} namun akses ditolak.`,
+      'WARNING'
+    );
+    return res.status(403).json({
+      success: false,
+      message: 'Akses Ditolak: Anda tidak memiliki wewenang untuk menghapus file permanen. Hanya Administrator yang berwenang.',
+    });
+  }
+
+  db.storedFiles = db.storedFiles || [];
+  const target = db.storedFiles.find((f) => f.id === fileId);
+
+  if (target) {
+    // Delete physical file if exists
+    try {
+      const fileNameOnDisk = target.storagePath ? path.basename(target.storagePath) : target.namaFile;
+      const physicalPath = path.resolve(STORAGE_DIR, fileNameOnDisk);
+      if (fs.existsSync(physicalPath)) {
+        fs.unlinkSync(physicalPath);
+      }
+    } catch (err) {
+      console.warn('Physical file deletion warning:', err);
+    }
+
+    db.storedFiles = db.storedFiles.filter((f) => f.id !== fileId);
+    commitDb(
+      'Hapus File Permanen',
+      'Penyimpanan Dokumen',
+      `File "${target.namaFile}" (${(target.ukuran / 1024).toFixed(1)} KB) dihapus permanen oleh ${adminName}.`,
+      'DANGER'
+    );
+  }
+
+  return res.json({
+    success: true,
+    message: 'File fisik dan metadata terkait berhasil dihapus permanen.',
+    version: db.meta.version,
+  });
+});
+
+// RBAC: Get list of admin users
+app.get('/api/admin/users', (req, res) => {
+  res.json({
+    success: true,
+    users: db.adminUsers || [],
+  });
+});
+
+// RBAC: Update user role or add user
+app.post('/api/admin/users', requireAdminAuth, (req, res) => {
+  const { uid, email, displayName, role, jabatan } = req.body;
+  if (!uid || !email) {
+    return res.status(400).json({ success: false, message: 'UID dan Email wajib disertakan.' });
+  }
+
+  db.adminUsers = db.adminUsers || [];
+  const existingIdx = db.adminUsers.findIndex((u) => u.uid === uid || u.email.toLowerCase() === email.toLowerCase());
+
+  if (existingIdx >= 0) {
+    db.adminUsers[existingIdx] = {
+      ...db.adminUsers[existingIdx],
+      role: role || db.adminUsers[existingIdx].role,
+      displayName: displayName || db.adminUsers[existingIdx].displayName,
+      jabatan: jabatan || db.adminUsers[existingIdx].jabatan,
+    };
+    commitDb(
+      'Perbarui Hak Akses User',
+      'Manajemen RBAC',
+      `Hak akses untuk ${email} diperbarui menjadi: ${role}.`,
+      'INFO'
+    );
+  } else {
+    const newUser: AppUser = {
+      uid,
+      email,
+      displayName: displayName || email,
+      role: role || 'petugas',
+      jabatan: jabatan || 'Petugas UPT',
+      status: 'Aktif',
+      createdAt: new Date().toISOString(),
+    };
+    db.adminUsers.push(newUser);
+    commitDb(
+      'Tambah User Admin/Petugas',
+      'Manajemen RBAC',
+      `User baru ${email} didaftarkan dengan hak akses: ${role}.`,
+      'SUCCESS'
+    );
+  }
+
+  return res.json({
+    success: true,
+    users: db.adminUsers,
+    version: db.meta.version,
+  });
 });
 
 // -------------------------------------------------------------------------

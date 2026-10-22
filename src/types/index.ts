@@ -238,3 +238,48 @@ export interface CategoryItem {
   nama: string;
   jenis: JenisTransaksi;
 }
+
+export type AdminRole = 'super_admin' | 'admin' | 'petugas' | 'pengguna_biasa';
+
+export interface AppUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: AdminRole;
+  jabatan?: string;
+  nip?: string;
+  status: 'Aktif' | 'Non-Aktif';
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
+export type StoredFileCategory =
+  | 'foto_profil'
+  | 'dokumen_identitas'
+  | 'arsip_excel'
+  | 'laporan_pdf'
+  | 'dokumen_pendukung'
+  | 'video'
+  | 'logo_upt'
+  | 'lainnya';
+
+export interface StoredFileMetadata {
+  id: string;
+  namaFile: string;
+  jenisFile: StoredFileCategory;
+  tipeMime: string;
+  ukuran: number; // in bytes
+  urlPenyimpanan: string;
+  storagePath: string;
+  tanggalUnggah: string;
+  adminUploader: {
+    uid?: string;
+    nama: string;
+    email?: string;
+    role: AdminRole;
+  };
+  wbpId?: string;
+  wbpNama?: string;
+  keterangan?: string;
+}
+

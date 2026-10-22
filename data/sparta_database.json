@@ -1,7 +1,7 @@
 {
   "meta": {
-    "version": 4,
-    "lastUpdated": "2026-10-21T05:56:52.264Z",
+    "version": 7,
+    "lastUpdated": "2026-10-22T08:44:24.322Z",
     "initializedAt": "2026-10-21T05:56:17.967Z"
   },
   "uptSettings": {
@@ -350,6 +350,33 @@
   ],
   "auditLogs": [
     {
+      "id": "log-1792658664322-200",
+      "timestamp": "2026-10-22 08:44:24",
+      "petugas": "Administrator Kasir",
+      "aksi": "Hapus File Permanen",
+      "modul": "Penyimpanan Dokumen",
+      "rincian": "File \"Dokumen_SK_Penahanan_Contoh.pdf\" (0.1 KB) dihapus permanen oleh Administrator.",
+      "tipe": "DANGER"
+    },
+    {
+      "id": "log-1792658652268-558",
+      "timestamp": "2026-10-22 08:44:12",
+      "petugas": "Administrator Kasir",
+      "aksi": "Unggah File Permanen",
+      "modul": "Penyimpanan Dokumen",
+      "rincian": "File \"Dokumen_SK_Penahanan_Contoh.pdf\" (0.1 KB) disimpan permanen oleh Anre Sanri Krg Gising (Bendahara).",
+      "tipe": "SUCCESS"
+    },
+    {
+      "id": "log-1792658641751-154",
+      "timestamp": "2026-10-22 08:44:01",
+      "petugas": "Administrator Kasir",
+      "aksi": "Percobaan Hapus Ditolak",
+      "modul": "Keamanan RBAC",
+      "rincian": "Pengguna dengan peran \"petugas\" (Administrator) mencoba menghapus file ID: test123 namun akses ditolak.",
+      "tipe": "WARNING"
+    },
+    {
       "id": "log-1792562212264-962",
       "timestamp": "2026-10-21 05:56:52",
       "petugas": "Administrator Kasir",
@@ -393,5 +420,35 @@
       "lastSeen": "2026-10-21T05:56:52.264Z",
       "adminName": "Administrator Kasir"
     }
-  }
+  },
+  "storedFiles": [],
+  "adminUsers": [
+    {
+      "uid": "admin-super",
+      "email": "admin@rutanjeneponto.go.id",
+      "displayName": "Adam Ridwansyah, A.Md.IP., S.H., M.Si (Kepala UPT)",
+      "role": "super_admin",
+      "jabatan": "Kepala Rutan",
+      "status": "Aktif",
+      "createdAt": "2026-10-22T08:43:51.945Z"
+    },
+    {
+      "uid": "admin-kasir",
+      "email": "kasir@rutanjeneponto.go.id",
+      "displayName": "Anre Sanri Krg Gising (Bendahara Kasir)",
+      "role": "admin",
+      "jabatan": "Bendahara Kasir EDC",
+      "status": "Aktif",
+      "createdAt": "2026-10-22T08:43:51.945Z"
+    },
+    {
+      "uid": "petugas-pintu",
+      "email": "petugas@rutanjeneponto.go.id",
+      "displayName": "Bripda Arman (Petugas Loket)",
+      "role": "petugas",
+      "jabatan": "Petugas Pelayanan Terpadu",
+      "status": "Aktif",
+      "createdAt": "2026-10-22T08:43:51.945Z"
+    }
+  ]
 }

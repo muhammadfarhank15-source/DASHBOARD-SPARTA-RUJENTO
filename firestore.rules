@@ -32,6 +32,14 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    match /file_metadata/{fileId} {
+      allow read, write: if true;
+    }
+
+    match /admin_users/{userId} {
+      allow read, write: if true;
+    }
+
     // Default: Selalu berikan izin baca dan tulis
     match /{document=**} {
       allow read, write: if true;

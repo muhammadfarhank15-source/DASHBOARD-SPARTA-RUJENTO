@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Eye,
   Type,
+  FolderArchive,
 } from 'lucide-react';
 import { useApp, AdminTab } from '../../context/AppContext';
 import { OfficialLogo } from '../common/OfficialLogo';
@@ -37,6 +38,7 @@ import { PengaturanUpt } from './PengaturanUpt';
 import { PengaturanTeksPortal } from './PengaturanTeksPortal';
 import { AuditLogView } from './AuditLogView';
 import { ImportExcelWbp } from './ImportExcelWbp';
+import { ManajemenFile } from './ManajemenFile';
 
 export const AdminPortal: React.FC = () => {
   const {
@@ -64,6 +66,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'riwayat', label: 'Riwayat Transaksi', icon: FileText },
     { id: 'rincian_keluar', label: 'Rincian Pengeluaran', icon: PieIcon },
     { id: 'laporan', label: 'Laporan Keuangan', icon: FileSpreadsheet },
+    { id: 'manajemen_file', label: 'Penyimpanan Berkas Firebase', icon: FolderArchive, badge: 'Storage' },
     { id: 'teks_portal', label: 'Teks & Kalimat Portal', icon: Type, badge: 'Edit' },
     { id: 'google_sheets', label: 'Integrasi Google Sheets', icon: FileSpreadsheet },
     { id: 'audit', label: 'Audit Log & Keamanan', icon: ShieldAlert },
@@ -336,6 +339,7 @@ export const AdminPortal: React.FC = () => {
           {activeAdminTab === 'riwayat' && <RiwayatTransaksi />}
           {activeAdminTab === 'rincian_keluar' && <RincianPengeluaran />}
           {activeAdminTab === 'laporan' && <LaporanKeuangan />}
+          {activeAdminTab === 'manajemen_file' && <ManajemenFile />}
           {activeAdminTab === 'teks_portal' && <PengaturanTeksPortal />}
           {activeAdminTab === 'google_sheets' && <GoogleSheetsIntegration />}
           {activeAdminTab === 'audit' && <AuditLogView />}

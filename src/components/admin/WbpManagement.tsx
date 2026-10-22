@@ -14,6 +14,8 @@ import {
   FileText,
   FileSpreadsheet,
   Eye,
+  Loader2,
+  Shield,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { WargaBinaan, StatusWbp } from '../../types';
@@ -37,10 +39,14 @@ export const WbpManagement: React.FC = () => {
     setFormDraft,
     clearFormDraft,
     autosaveState,
+    uploadPermanentFile,
+    canDeleteFiles,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('Semua');
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [showDeletePhotoConfirm, setShowDeletePhotoConfirm] = useState(false);
 
   // Modal State for Add / Edit
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -80,20 +86,35 @@ export const WbpManagement: React.FC = () => {
     });
   };
 
-  // Handle Photo Upload
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Photo Upload (Direct to Firebase Storage & Firestore Metadata)
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Ukuran foto profil maksimal 2MB.');
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Ukuran foto profil maksimal 5MB.');
       return;
     }
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = reader.result as string;
-      handleFieldChange('fotoUrl', base64);
-    };
-    reader.readAsDataURL(file);
+
+    setIsUploadingPhoto(true);
+    try {
+      const res = await uploadPermanentFile(
+        file,
+        file.name,
+        'foto_profil',
+        {
+          wbpId: editingWbp?.id,
+          wbpNama: formData.nama || editingWbp?.nama,
+          keterangan: `Foto profil identitas WBP ${formData.nama || 'Baru'}`,
+        }
+      );
+      handleFieldChange('fotoUrl', res.urlPenyimpanan);
+    } catch (err: any) {
+      alert(`Gagal menyimpan foto ke Firebase Storage: ${err?.message || 'Periksa koneksi'}`);
+    } finally {
+      setIsUploadingPhoto(false);
+      // Reset input value so same file can be re-uploaded if needed
+      e.target.value = '';
+    }
   };
 
   // Delete Confirmation State
@@ -537,7 +558,12 @@ export const WbpManagement: React.FC = () => {
               {/* Photo & Basic Info Banner */}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-center gap-4">
                 <div className="relative shrink-0">
-                  {formData.fotoUrl ? (
+                  {isUploadingPhoto ? (
+                    <div className="w-20 h-20 rounded-2xl bg-blue-50 border-2 border-blue-400 flex flex-col items-center justify-center gap-1">
+                      <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                      <span className="text-[9px] font-bold text-blue-700">Menyimpan...</span>
+                    </div>
+                  ) : formData.fotoUrl ? (
                     <img
                       src={formData.fotoUrl}
                       alt={formData.nama || 'Foto WBP'}
@@ -550,34 +576,45 @@ export const WbpManagement: React.FC = () => {
                   )}
                   <label
                     htmlFor="wbp-photo-input"
-                    className="absolute -bottom-2 -right-2 px-2 py-1 bg-blue-900 hover:bg-blue-800 text-white text-[10px] font-bold rounded-lg cursor-pointer shadow-xs border border-blue-700"
+                    className={`absolute -bottom-2 -right-2 px-2 py-1 bg-blue-900 hover:bg-blue-800 text-white text-[10px] font-bold rounded-lg cursor-pointer shadow-xs border border-blue-700 ${
+                      isUploadingPhoto ? 'opacity-50 pointer-events-none' : ''
+                    }`}
                   >
-                    Upload
+                    {isUploadingPhoto ? '...' : 'Upload'}
                   </label>
                   <input
                     id="wbp-photo-input"
                     type="file"
                     accept="image/*"
+                    disabled={isUploadingPhoto}
                     onChange={handlePhotoUpload}
                     className="hidden"
                   />
                 </div>
 
                 <div className="flex-1 space-y-1 text-center sm:text-left">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                    Foto &amp; Rekam Visual Warga Binaan
-                  </span>
-                  <p className="text-xs text-slate-600">
-                    Format gambar JPG/PNG maks 2MB. Foto disimpan permanen ke server database untuk identifikasi kasir EDC dan layanan keluarga.
+                  <div className="flex items-center gap-1.5 justify-center sm:justify-start">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700">
+                      Foto &amp; Rekam Visual Warga Binaan
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      Firebase Storage
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Foto diunggah dan disimpan permanen di Firebase Storage &amp; metadata tercatat di database. Tetap tersimpan meskipun browser dimuat ulang.
                   </p>
                   {formData.fotoUrl && (
-                    <button
-                      type="button"
-                      onClick={() => handleFieldChange('fotoUrl', '')}
-                      className="text-[11px] text-rose-600 hover:underline font-semibold"
-                    >
-                      Hapus Foto
-                    </button>
+                    <div className="pt-1 flex items-center gap-2 justify-center sm:justify-start">
+                      <button
+                        type="button"
+                        onClick={() => setShowDeletePhotoConfirm(true)}
+                        className="text-[11px] text-rose-600 hover:text-rose-700 hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        Hapus Foto Permanen
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -909,6 +946,20 @@ export const WbpManagement: React.FC = () => {
           }
         }}
         onCancel={() => setDeletingWbp(null)}
+      />
+
+      {/* CONFIRMATION MODAL FOR DELETING WBP PHOTO */}
+      <ConfirmModal
+        isOpen={showDeletePhotoConfirm}
+        title="Konfirmasi Hapus Foto WBP"
+        message={`Apakah Anda yakin ingin menghapus foto profil warga binaan ini secara permanen dari Firebase Storage?\n\nTindakan ini hanya dapat dilakukan oleh Administrator yang berwenang dan akan dicatat ke dalam Audit Trail.`}
+        confirmText="Ya, Hapus Foto"
+        isDanger={true}
+        onConfirm={() => {
+          handleFieldChange('fotoUrl', '');
+          setShowDeletePhotoConfirm(false);
+        }}
+        onCancel={() => setShowDeletePhotoConfirm(false)}
       />
     </div>
   );

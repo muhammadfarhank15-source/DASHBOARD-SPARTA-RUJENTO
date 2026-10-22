@@ -3,6 +3,7 @@ import { Lock, ArrowLeft, ShieldAlert, KeyRound, User, CheckCircle, Flame } from
 import { useApp } from '../../context/AppContext';
 import { OfficialLogo } from '../common/OfficialLogo';
 import { WindEffectOverlay } from '../common/WindEffectOverlay';
+import { PasswordInput } from '../common/PasswordInput';
 
 interface AdminLoginProps {
   onBackToLanding: () => void;
@@ -169,15 +170,16 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onBackToLanding }) => {
                 <KeyRound className="w-3.5 h-3.5 text-amber-400" />
                 Kata Sandi Admin:
               </label>
-              <input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
                   setErrorMsg('');
                 }}
                 placeholder="Masukkan kata sandi..."
-                className="w-full px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                className="px-4 py-3 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-400"
+                buttonClassName="hover:bg-slate-700/60"
+                iconClassName="text-amber-400"
                 required
               />
             </div>

@@ -12,6 +12,10 @@ import {
   AutosaveState,
   ResetOptions,
   BackupSnapshot,
+  AdminRole,
+  AppUser,
+  StoredFileCategory,
+  StoredFileMetadata,
 } from '../types';
 import {
   INITIAL_UPT_SETTINGS,
@@ -24,6 +28,7 @@ import {
 } from '../data/initialData';
 import { apiService } from '../services/apiService';
 import { firestoreService } from '../services/firestoreService';
+import { storageService } from '../services/storageService';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User, signInWithEmailAndPassword } from '../services/firebase';
 
 export type AdminTab =
@@ -37,6 +42,8 @@ export type AdminTab =
   | 'riwayat'
   | 'rincian_keluar'
   | 'laporan'
+  | 'manajemen_file'
+  | 'manajemen_rbac'
   | 'teks_portal'
   | 'pengaturan_publik'
   | 'audit'
@@ -54,11 +61,28 @@ interface AppContextType {
   setCurrentPortal: (portal: 'landing' | 'public' | 'admin') => void;
   adminLoggedIn: boolean;
   firebaseUser: User | null;
+  currentUserRole: AdminRole;
+  setCurrentUserRole: (role: AdminRole) => void;
+  canDeleteFiles: boolean;
+  canResetSystem: boolean;
+  canManageSettings: boolean;
+  adminUsers: AppUser[];
+  updateUserRole: (uid: string, role: AdminRole) => Promise<boolean>;
   activeAdminTab: AdminTab;
   setActiveAdminTab: (tab: AdminTab) => void;
   loginAdmin: (password: string, email?: string) => Promise<boolean>;
   loginWithGoogle: () => Promise<boolean>;
   logoutAdmin: () => Promise<void>;
+
+  // Permanent Storage & Files
+  storedFiles: StoredFileMetadata[];
+  uploadPermanentFile: (
+    file: File | Blob,
+    fileName: string,
+    category: StoredFileCategory,
+    metadata?: { wbpId?: string; wbpNama?: string; keterangan?: string }
+  ) => Promise<StoredFileMetadata>;
+  deletePermanentFile: (fileMetadata: StoredFileMetadata) => Promise<boolean>;
 
   // Data States (Loaded from Cloud Firestore in Real-Time)
   wbpList: WargaBinaan[];
@@ -158,6 +182,9 @@ const STORAGE_KEYS = {
   SETTINGS: 'sparta_rujento_settings_v1',
   CATEGORIES: 'sparta_rujento_categories_v1',
   AUTH: 'sparta_rujento_auth_v1',
+  ROLE: 'sparta_rujento_role_v1',
+  FILES: 'sparta_rujento_files_v1',
+  USERS: 'sparta_rujento_users_v1',
 };
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -166,8 +193,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem(STORAGE_KEYS.AUTH) === 'true';
   });
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [currentUserRole, setCurrentUserRoleState] = useState<AdminRole>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.ROLE);
+    return (saved as AdminRole) || 'admin';
+  });
   const [activeAdminTab, setActiveAdminTab] = useState<AdminTab>('dashboard');
   const [selectedWbpIdForInspection, setSelectedWbpIdForInspection] = useState<string | null>(null);
+
+  // Stored Files & RBAC users states
+  const [storedFiles, setStoredFiles] = useState<StoredFileMetadata[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.FILES);
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [adminUsers, setAdminUsers] = useState<AppUser[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.USERS);
+    return saved
+      ? JSON.parse(saved)
+      : [
+          {
+            uid: 'admin-super',
+            email: 'admin@rutanjeneponto.go.id',
+            displayName: 'Adam Ridwansyah, A.Md.IP., S.H., M.Si (Kepala UPT)',
+            role: 'super_admin',
+            jabatan: 'Kepala Rutan',
+            status: 'Aktif',
+            createdAt: '2026-01-01',
+          },
+          {
+            uid: 'admin-kasir',
+            email: 'kasir@rutanjeneponto.go.id',
+            displayName: 'Anre Sanri Krg Gising (Bendahara Kasir)',
+            role: 'admin',
+            jabatan: 'Bendahara Kasir EDC',
+            status: 'Aktif',
+            createdAt: '2026-01-01',
+          },
+          {
+            uid: 'petugas-pintu',
+            email: 'petugas@rutanjeneponto.go.id',
+            displayName: 'Bripda Arman (Petugas Loket)',
+            role: 'petugas',
+            jabatan: 'Petugas Pelayanan Terpadu',
+            status: 'Aktif',
+            createdAt: '2026-01-01',
+          },
+        ];
+  });
+
+  const setCurrentUserRole = (role: AdminRole) => {
+    setCurrentUserRoleState(role);
+    localStorage.setItem(STORAGE_KEYS.ROLE, role);
+  };
+
+  // Cukup hanya Administrator terautentikasi untuk:
+  // 1. Hapus Berkas Permanen
+  // 2. Reset Total Keuangan
+  // 3. Kelola Hak Akses & Pengaturan Sistem
+  const canDeleteFiles = adminLoggedIn;
+  const canResetSystem = adminLoggedIn;
+  const canManageSettings = adminLoggedIn;
 
   // Firestore Live States
   const [wbpList, setWbpList] = useState<WargaBinaan[]>(() => {
@@ -303,6 +388,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.AUTH, adminLoggedIn ? 'true' : 'false');
   }, [adminLoggedIn]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(storedFiles));
+  }, [storedFiles]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(adminUsers));
+  }, [adminUsers]);
+
+  // Subscribe to permanent files from Firestore
+  useEffect(() => {
+    const unsubFiles = storageService.subscribeFileList(
+      (files) => {
+        if (files) {
+          setStoredFiles(files);
+        }
+      },
+      (err) => console.warn('[Storage] Files stream notice:', err.message)
+    );
+    return () => unsubFiles();
+  }, []);
+
+  // Sync users with backend
+  useEffect(() => {
+    fetch('/api/admin/users')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data.users) && data.users.length > 0) {
+          setAdminUsers(data.users);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Listen to Firebase Auth state
   useEffect(() => {
@@ -1428,6 +1546,75 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const uploadPermanentFile = async (
+    file: File | Blob,
+    fileName: string,
+    category: StoredFileCategory,
+    metadata?: { wbpId?: string; wbpNama?: string; keterangan?: string }
+  ): Promise<StoredFileMetadata> => {
+    try {
+      const uploader = {
+        uid: firebaseUser?.uid,
+        nama: firebaseUser?.displayName || firebaseUser?.email || 'Administrator Kasir',
+        email: firebaseUser?.email || undefined,
+        role: currentUserRole,
+      };
+      const res = await storageService.uploadPermanentFile(file, fileName, category, uploader, metadata);
+      setStoredFiles((prev) => [res, ...prev.filter((f) => f.id !== res.id)]);
+      showToast(`File "${fileName}" berhasil diunggah permanen ke Firebase Storage!`, 'success');
+      return res;
+    } catch (err: any) {
+      const msg = err?.message || 'Gagal menyimpan file permanen.';
+      showToast(msg, 'error');
+      throw err;
+    }
+  };
+
+  const deletePermanentFile = async (fileMetadata: StoredFileMetadata): Promise<boolean> => {
+    if (!canDeleteFiles) {
+      showToast('Akses Ditolak: Hanya Administrator yang berwenang menghapus file permanen.', 'error');
+      return false;
+    }
+    try {
+      const adminInfo = {
+        role: currentUserRole,
+        nama: firebaseUser?.displayName || firebaseUser?.email || 'Administrator Kasir',
+        email: firebaseUser?.email || undefined,
+      };
+      await storageService.deletePermanentFile(fileMetadata, adminInfo);
+      setStoredFiles((prev) => prev.filter((f) => f.id !== fileMetadata.id));
+      showToast(`File "${fileMetadata.namaFile}" berhasil dihapus permanen dari Firebase Storage dan database.`, 'success');
+      return true;
+    } catch (err: any) {
+      const msg = err?.message || 'Gagal menghapus file.';
+      showToast(msg, 'error');
+      return false;
+    }
+  };
+
+  const updateUserRole = async (uid: string, role: AdminRole): Promise<boolean> => {
+    if (!canManageSettings) {
+      showToast('Akses Ditolak: Hanya Administrator yang dapat mengubah hak akses.', 'error');
+      return false;
+    }
+    try {
+      setAdminUsers((prev) => prev.map((u) => (u.uid === uid ? { ...u, role } : u)));
+      await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer SPARTA`,
+        },
+        body: JSON.stringify({ uid, role }),
+      });
+      showToast(`Hak akses pengguna berhasil diperbarui menjadi ${role}.`, 'success');
+      return true;
+    } catch (err) {
+      showToast('Gagal memperbarui hak akses pengguna.', 'error');
+      return false;
+    }
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -1435,6 +1622,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentPortal,
         adminLoggedIn,
         firebaseUser,
+        currentUserRole,
+        setCurrentUserRole,
+        canDeleteFiles,
+        canResetSystem,
+        canManageSettings,
+        adminUsers,
+        updateUserRole,
+        storedFiles,
+        uploadPermanentFile,
+        deletePermanentFile,
         activeAdminTab,
         setActiveAdminTab,
         loginAdmin,

@@ -124,11 +124,31 @@
       "type": "object",
       "properties": {
         "email": { "type": "string", "maxLength": 150 },
-        "role": { "type": "string", "enum": ["admin", "superadmin"] },
+        "role": { "type": "string", "enum": ["super_admin", "admin", "petugas", "pengguna_biasa"] },
         "displayName": { "type": "string", "maxLength": 150 },
         "createdAt": { "type": "string", "maxLength": 40 }
       },
       "required": ["email", "role"]
+    },
+    "file_metadata": {
+      "title": "Metadata Berkas Permanen",
+      "description": "Metadata file fisik yang tersimpan permanen di Firebase Storage (foto profil, berkas identitas, arsip Excel, dsb.)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "namaFile": { "type": "string", "maxLength": 255 },
+        "jenisFile": { "type": "string", "maxLength": 64 },
+        "tipeMime": { "type": "string", "maxLength": 128 },
+        "ukuran": { "type": "number" },
+        "urlPenyimpanan": { "type": "string", "maxLength": 1000 },
+        "storagePath": { "type": "string", "maxLength": 500 },
+        "tanggalUnggah": { "type": "string", "maxLength": 40 },
+        "adminUploader": { "type": "object" },
+        "wbpId": { "type": "string", "maxLength": 128 },
+        "wbpNama": { "type": "string", "maxLength": 128 },
+        "keterangan": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["namaFile", "jenisFile", "ukuran", "urlPenyimpanan", "tanggalUnggah"]
     }
   },
   "firestore": {
@@ -156,9 +176,17 @@
       "schema": "kategori",
       "description": "Koleksi master data kategori transaksi"
     },
+    "/file_metadata/{fileId}": {
+      "schema": "file_metadata",
+      "description": "Koleksi metadata dokumen dan file permanen di Firebase Storage"
+    },
     "/admins/{adminUid}": {
       "schema": "admin_user",
       "description": "Dokumen verifikasi hak akses admin terdaftar"
+    },
+    "/admin_users/{userId}": {
+      "schema": "admin_user",
+      "description": "Koleksi profil dan otorisasi hak akses peran pengguna (RBAC)"
     }
   }
 }
