@@ -13,10 +13,16 @@ import {
   Cloud,
   Save,
   Loader2,
+  Copy,
+  Check,
+  ShieldCheck,
+  Clock,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { OfficialLogo } from '../common/OfficialLogo';
 import { PasswordInput } from '../common/PasswordInput';
+import { validatePasswordStrength, generateSecureRandomPassword } from '../../utils/security';
+import { formatDateTimeIndo } from '../../utils/formatters';
 
 export const PengaturanUpt: React.FC = () => {
   const {
@@ -86,7 +92,21 @@ export const PengaturanUpt: React.FC = () => {
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [expiryDays, setExpiryDays] = useState<number>(uptSettings.passwordExpiryDays || 90);
   const [passwordMsg, setPasswordMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+  const [copiedRandomPass, setCopiedRandomPass] = useState(false);
+
+  const passwordStrength = validatePasswordStrength(newPassword);
+
+  const handleGenerateRandom = () => {
+    const random = generateSecureRandomPassword(16);
+    setNewPassword(random);
+    setConfirmPassword(random);
+    navigator.clipboard?.writeText(random).catch(() => {});
+    setCopiedRandomPass(true);
+    setTimeout(() => setCopiedRandomPass(false), 3000);
+  };
 
   // Public Visibility Settings State
   const [publicSettings, setPublicSettings] = useState(uptSettings.publicPortalSettings);
@@ -143,15 +163,30 @@ export const PengaturanUpt: React.FC = () => {
       setPasswordMsg({ type: 'error', text: 'Konfirmasi kata sandi baru tidak cocok!' });
       return;
     }
+    if (!passwordStrength.isValid) {
+      setPasswordMsg({
+        type: 'error',
+        text: `Kata sandi belum memenuhi kriteria: ${passwordStrength.errors.join(', ')}`,
+      });
+      return;
+    }
 
-    const res = await changeAdminPassword(oldPassword, newPassword);
-    if (res.success) {
-      setPasswordMsg({ type: 'success', text: res.message });
-      setOldPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } else {
-      setPasswordMsg({ type: 'error', text: res.message });
+    setIsSubmittingPassword(true);
+    setPasswordMsg(null);
+    try {
+      const res = await changeAdminPassword(oldPassword, newPassword, confirmPassword, expiryDays);
+      if (res.success) {
+        setPasswordMsg({ type: 'success', text: res.message });
+        setOldPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      } else {
+        setPasswordMsg({ type: 'error', text: res.message });
+      }
+    } catch (err: any) {
+      setPasswordMsg({ type: 'error', text: err?.message || 'Gagal mengubah kata sandi.' });
+    } finally {
+      setIsSubmittingPassword(false);
     }
   };
 
@@ -463,11 +498,36 @@ export const PengaturanUpt: React.FC = () => {
         <div className="space-y-6">
           {/* Ganti Password */}
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <KeyRound className="w-4 h-4 text-amber-600" />
-              <h3 className="font-bold text-sm text-slate-900">
-                Penggantian Kata Sandi Admin Berkala
-              </h3>
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-amber-600" />
+                <h3 className="font-bold text-sm text-slate-900">
+                  Penggantian Kata Sandi Admin Berkala
+                </h3>
+              </div>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                SHA-256 Salted
+              </span>
+            </div>
+
+            {/* Metadata Masa Berlaku Kata Sandi */}
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
+              <div className="flex items-center justify-between text-slate-600">
+                <span className="flex items-center gap-1 text-[11px]">
+                  <Clock className="w-3 h-3 text-slate-400" />
+                  Terakhir Diperbarui:
+                </span>
+                <span className="font-bold text-slate-800 text-[11px]">
+                  {uptSettings.passwordUpdatedAt ? formatDateTimeIndo(uptSettings.passwordUpdatedAt) : 'Awal Sistem'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-600">
+                <span className="text-[11px]">Masa Berlaku Aktif:</span>
+                <span className="font-bold text-slate-800 text-[11px]">
+                  {uptSettings.passwordExpiryDays || 90} Hari Sekali
+                </span>
+              </div>
             </div>
 
             {passwordMsg && (
@@ -482,15 +542,15 @@ export const PengaturanUpt: React.FC = () => {
               </div>
             )}
 
-            <form onSubmit={handleChangePassword} className="space-y-3">
+            <form onSubmit={handleChangePassword} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Kata Sandi Lama:
+                  Kata Sandi Saat Ini:
                 </label>
                 <PasswordInput
                   value={oldPassword}
                   onChange={(e) => setOldPassword(e.target.value)}
-                  placeholder="Masukkan kata sandi lama..."
+                  placeholder="Masukkan kata sandi saat ini..."
                   className="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
                   buttonClassName="hover:bg-slate-100"
                   iconClassName="text-slate-600"
@@ -499,20 +559,78 @@ export const PengaturanUpt: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Kata Sandi Baru (Min. 6 Karakter):
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-semibold text-slate-700">
+                    Kata Sandi Baru (Min. 12 Karakter):
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGenerateRandom}
+                    className="text-[11px] text-blue-900 hover:text-blue-700 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedRandomPass ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                    {copiedRandomPass ? 'Disalin ke Clipboard!' : 'Buat Password Acak'}
+                  </button>
+                </div>
                 <PasswordInput
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Masukkan kata sandi baru..."
+                  placeholder="Masukkan kata sandi baru yang kuat..."
                   className="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
                   buttonClassName="hover:bg-slate-100"
                   iconClassName="text-slate-600"
-                  minLength={6}
                   required
                 />
               </div>
+
+              {/* Password Strength Meter */}
+              {newPassword && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between font-semibold text-[11px] text-slate-600">
+                    <span>Kekuatan Kata Sandi:</span>
+                    <span
+                      className={
+                        passwordStrength.isValid
+                          ? 'text-emerald-700 font-bold'
+                          : passwordStrength.score >= 60
+                          ? 'text-amber-700'
+                          : 'text-rose-700'
+                      }
+                    >
+                      {passwordStrength.isValid ? 'Sangat Kuat' : `${passwordStrength.score}%`}
+                    </span>
+                  </div>
+                  <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${
+                        passwordStrength.isValid
+                          ? 'bg-emerald-600'
+                          : passwordStrength.score >= 60
+                          ? 'bg-amber-500'
+                          : 'bg-rose-500'
+                      }`}
+                      style={{ width: `${passwordStrength.score}%` }}
+                    ></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1 text-[10px] pt-1">
+                    <span className={passwordStrength.hasMinLength ? 'text-emerald-700 font-bold' : 'text-slate-400'}>
+                      ✓ Min. 12 Karakter
+                    </span>
+                    <span className={passwordStrength.hasUpper ? 'text-emerald-700 font-bold' : 'text-slate-400'}>
+                      ✓ Huruf Besar (A-Z)
+                    </span>
+                    <span className={passwordStrength.hasLower ? 'text-emerald-700 font-bold' : 'text-slate-400'}>
+                      ✓ Huruf Kecil (a-z)
+                    </span>
+                    <span className={passwordStrength.hasNumber ? 'text-emerald-700 font-bold' : 'text-slate-400'}>
+                      ✓ Digit Angka (0-9)
+                    </span>
+                    <span className={passwordStrength.hasSymbol ? 'text-emerald-700 font-bold col-span-2' : 'text-slate-400 col-span-2'}>
+                      ✓ Karakter Simbol (@$!%*?&#)
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -525,16 +643,33 @@ export const PengaturanUpt: React.FC = () => {
                   className="px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-800"
                   buttonClassName="hover:bg-slate-100"
                   iconClassName="text-slate-600"
-                  minLength={6}
                   required
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Masa Berlaku Kata Sandi:
+                </label>
+                <select
+                  value={expiryDays}
+                  onChange={(e) => setExpiryDays(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white font-medium"
+                >
+                  <option value={30}>Setiap 30 Hari (Pengawasan Tinggi)</option>
+                  <option value={60}>Setiap 60 Hari (2 Bulan)</option>
+                  <option value={90}>Setiap 90 Hari (Standar Rekomendasi)</option>
+                  <option value={180}>Setiap 180 Hari (6 Bulan)</option>
+                </select>
+              </div>
+
               <button
                 type="submit"
-                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-950 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                disabled={isSubmittingPassword || !passwordStrength.isValid}
+                className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-950 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
-                Perbarui Kata Sandi Admin
+                {isSubmittingPassword ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {isSubmittingPassword ? 'Memperbarui...' : 'Perbarui Kata Sandi Admin'}
               </button>
             </form>
           </div>

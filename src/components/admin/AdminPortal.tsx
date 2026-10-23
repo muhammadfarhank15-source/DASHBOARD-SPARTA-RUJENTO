@@ -51,6 +51,8 @@ export const AdminPortal: React.FC = () => {
     setToastNotification,
     hasSyncConflict,
     resolveSyncConflict,
+    isPasswordExpired,
+    passwordDaysRemaining,
   } = useApp();
 
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -326,6 +328,39 @@ export const AdminPortal: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Password Expiration Alert Banner */}
+        {isPasswordExpired ? (
+          <div className="bg-rose-600 text-white px-4 py-2.5 border-b border-rose-700 flex flex-wrap items-center justify-between gap-3 text-xs font-bold shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="p-1 rounded-md bg-rose-900 text-rose-200">🔒</span>
+              <span>
+                Pemberitahuan Keamanan: Masa berlaku kata sandi Admin telah kedaluwarsa. Mohon segera perbarui password Anda untuk menjaga keamanan data rutan.
+              </span>
+            </div>
+            <button
+              onClick={() => setActiveAdminTab('pengaturan_upt')}
+              className="px-3 py-1 bg-white hover:bg-slate-100 text-rose-700 text-xs font-bold rounded-lg shadow-xs cursor-pointer transition-colors"
+            >
+              Ganti Password Sekarang
+            </button>
+          </div>
+        ) : passwordDaysRemaining !== null && passwordDaysRemaining <= 7 ? (
+          <div className="bg-amber-500 text-slate-950 px-4 py-2 border-b border-amber-600 flex flex-wrap items-center justify-between gap-3 text-xs font-bold shadow-xs">
+            <div className="flex items-center gap-2">
+              <span className="p-1 rounded-md bg-amber-900 text-amber-200">⏳</span>
+              <span>
+                Pengingat Berkala: Masa berlaku kata sandi Admin akan habis dalam {passwordDaysRemaining} hari ke depan ({uptSettings.passwordExpiryDays || 90} hari kebijakan rotasi).
+              </span>
+            </div>
+            <button
+              onClick={() => setActiveAdminTab('pengaturan_upt')}
+              className="px-3 py-1 bg-slate-950 hover:bg-slate-900 text-amber-300 text-xs font-bold rounded-lg shadow-xs cursor-pointer transition-colors"
+            >
+              Perbarui Kata Sandi
+            </button>
+          </div>
+        ) : null}
 
         {/* Dynamic Tab Body */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">

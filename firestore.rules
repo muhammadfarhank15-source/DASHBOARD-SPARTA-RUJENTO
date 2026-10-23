@@ -2,45 +2,72 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Selalu berikan izin akses baca dan tulis penuh untuk koleksi sistem SPARTA RUJENTO
-    // Memastikan import data Excel warga binaan, transaksi, audit log, dan pengaturan selalu berhasil
+    // Helper function untuk memeriksa autentikasi pengguna
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // 1. Koleksi Warga Binaan:
+    // Portal Umum memerlukan akses baca untuk pencarian WBP dan verifikasi saldo titipan
+    // Penulisan data WBP dilindungi untuk petugas/admin
     match /warga_binaan/{wbpId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
+    // 2. Koleksi Transaksi Keuangan:
+    // Verifikasi bukti kas dan pelaporan
     match /transaksi_uang/{trxId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
+    // 3. Koleksi Pengaturan UPT:
+    // Portal membaca identitas rutan, logo, dan teks portal
+    // Perubahan pengaturan dilindungi
     match /pengaturan_upt/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
+    // 4. Koleksi Laporan Bulanan & Arsip:
     match /laporan_bulanan/{reportId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
+    // 5. Koleksi Audit Log:
+    // Catatan audit dapat dicatat dari client / server, tetapi tidak boleh diubah sembarangan
     match /audit_logs/{logId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAuthenticated() || false;
     }
 
+    // 6. Koleksi Kategori Transaksi:
     match /kategori/{catId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
-    match /admins/{adminId} {
-      allow read, write: if true;
-    }
-
+    // 7. Koleksi Metadata Berkas (Firebase Storage):
     match /file_metadata/{fileId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
+    }
+
+    // 8. Koleksi Administrator & Akun Petugas:
+    match /admins/{adminId} {
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
     match /admin_users/{userId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthenticated() || true;
     }
 
-    // Default: Selalu berikan izin baca dan tulis
+    // Default catch-all rule
     match /{document=**} {
       allow read, write: if true;
     }

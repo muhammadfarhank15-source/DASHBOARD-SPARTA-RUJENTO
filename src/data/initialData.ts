@@ -87,7 +87,11 @@ export const INITIAL_UPT_SETTINGS: UptSettings = {
   bendaharaNama: 'Anre Sanri Krg Gising',
   bendaharaNip: '-',
   logoUrl: '/assets/logo.png', // Foto Resmi Rutan Kelas IIB Jeneponto
-  adminPassword: 'adminpassword123',
+  passwordHash: '',
+  passwordSalt: '',
+  passwordUpdatedAt: '',
+  passwordExpiryDays: 90,
+  isPasswordInitialized: false,
   googleSheetsUrl: '',
   syncStatus: 'Lokal Mode',
   lastSyncTime: '2026-10-19 22:15:00',

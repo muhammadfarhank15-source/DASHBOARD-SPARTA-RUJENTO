@@ -5,6 +5,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -158,7 +159,12 @@ export interface UptSettings {
   bendaharaNama: string;
   bendaharaNip: string;
   logoUrl: string;
-  adminPassword: string;
+  adminPassword?: string;
+  passwordHash?: string;
+  passwordSalt?: string;
+  passwordUpdatedAt?: string;
+  passwordExpiryDays?: number;
+  isPasswordInitialized?: boolean;
   googleSheetsUrl: string;
   syncStatus: 'Tersambung' | 'Terputus' | 'Lokal Mode';
   lastSyncTime: string;
@@ -297,7 +303,11 @@ const DEFAULT_UPT_SETTINGS: UptSettings = {
   bendaharaNama: 'Anre Sanri Krg Gising',
   bendaharaNip: '-',
   logoUrl: '/assets/logo.png',
-  adminPassword: 'adminpassword123',
+  passwordHash: '',
+  passwordSalt: '',
+  passwordUpdatedAt: '',
+  passwordExpiryDays: 90,
+  isPasswordInitialized: false,
   googleSheetsUrl: '',
   syncStatus: 'Lokal Mode',
   lastSyncTime: new Date().toISOString().replace('T', ' ').substring(0, 19),
@@ -806,14 +816,181 @@ app.get('/api/data', (req, res) => {
   });
 });
 
+// --- SECURITY & CRYPTO HELPERS ---
+function hashPasswordWithSaltNode(password: string, salt: string): string {
+  let buffer = Buffer.from(`${salt}:${password}:sparta_rujento_secure_v2`, 'utf8');
+  for (let i = 0; i < 5000; i++) {
+    buffer = crypto.createHash('sha256').update(buffer).digest();
+  }
+  return buffer.toString('hex');
+}
+
+function validatePasswordPolicy(password: string): { valid: boolean; message?: string } {
+  if (!password || password.length < 12) {
+    return { valid: false, message: 'Kata sandi minimal 12 karakter!' };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { valid: false, message: 'Kata sandi harus mengandung minimal 1 huruf kapital / besar (A-Z)!' };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { valid: false, message: 'Kata sandi harus mengandung minimal 1 huruf kecil (a-z)!' };
+  }
+  if (!/[0-9]/.test(password)) {
+    return { valid: false, message: 'Kata sandi harus mengandung minimal 1 digit angka (0-9)!' };
+  }
+  if (!/[^A-Za-z0-9]/.test(password)) {
+    return { valid: false, message: 'Kata sandi harus mengandung minimal 1 karakter khusus / simbol (@$!%*?&#)!' };
+  }
+  return { valid: true };
+}
+
+// Failed login attempts tracker for rate limiting
+interface LoginAttemptTracker {
+  failedCount: number;
+  lockedUntil: number;
+}
+const loginAttempts = new Map<string, LoginAttemptTracker>();
+
+// 3.5 Server Time Synchronization (WITA / Asia/Makassar UTC+08:00)
+app.get('/api/time', (req, res) => {
+  const now = new Date();
+  const witaFormatted =
+    new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Makassar',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(now).replace(',', '').trim() + ' WITA';
+
+  res.json({
+    timestamp: now.getTime(),
+    iso: now.toISOString(),
+    timeZone: 'Asia/Makassar',
+    offsetHours: 8,
+    witaString: witaFormatted,
+  });
+});
+
 // 4. Admin Authentication
+app.get('/api/auth/status', (req, res) => {
+  const isInitialized = Boolean(db.uptSettings.passwordHash && db.uptSettings.passwordSalt);
+  let isExpired = false;
+  let daysRemaining = db.uptSettings.passwordExpiryDays || 90;
+
+  if (db.uptSettings.passwordUpdatedAt) {
+    const updated = new Date(db.uptSettings.passwordUpdatedAt).getTime();
+    if (!isNaN(updated)) {
+      const maxAgeMs = (db.uptSettings.passwordExpiryDays || 90) * 24 * 60 * 60 * 1000;
+      const ageMs = Date.now() - updated;
+      isExpired = ageMs > maxAgeMs;
+      daysRemaining = Math.max(0, Math.ceil((maxAgeMs - ageMs) / (24 * 60 * 60 * 1000)));
+    }
+  }
+
+  res.json({
+    isPasswordInitialized: isInitialized,
+    passwordUpdatedAt: db.uptSettings.passwordUpdatedAt || '',
+    passwordExpiryDays: db.uptSettings.passwordExpiryDays || 90,
+    isExpired,
+    daysRemaining,
+  });
+});
+
+// Initial Setup (Only allowed once if uninitialized)
+app.post('/api/auth/setup-initial-password', (req, res) => {
+  const alreadyInitialized = Boolean(db.uptSettings.passwordHash && db.uptSettings.passwordSalt);
+  if (alreadyInitialized) {
+    return res.status(403).json({
+      success: false,
+      message: 'Kata sandi administrator awal sudah disetup sebelumnya.',
+    });
+  }
+
+  const { newPassword, confirmPassword } = req.body;
+  if (!newPassword || newPassword !== confirmPassword) {
+    return res.status(400).json({ success: false, message: 'Konfirmasi kata sandi tidak cocok.' });
+  }
+
+  const policy = validatePasswordPolicy(newPassword);
+  if (!policy.valid) {
+    return res.status(400).json({ success: false, message: policy.message });
+  }
+
+  if (newPassword === 'adminpassword123' || newPassword === 'admin') {
+    return res.status(400).json({ success: false, message: 'Dilarang menggunakan kata sandi default bawaan!' });
+  }
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = hashPasswordWithSaltNode(newPassword, salt);
+  const nowIso = new Date().toISOString();
+
+  db.uptSettings.passwordHash = hash;
+  db.uptSettings.passwordSalt = salt;
+  db.uptSettings.passwordUpdatedAt = nowIso;
+  db.uptSettings.isPasswordInitialized = true;
+  delete db.uptSettings.adminPassword;
+
+  commitDb(
+    'Inisialisasi Kata Sandi Administrator',
+    'Keamanan Server',
+    'Kata sandi awal administrator berhasil dibuat dengan hashing SHA-256 tersalt.',
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    message: 'Kata sandi administrator awal berhasil ditetapkan secara aman!',
+    passwordUpdatedAt: nowIso,
+  });
+});
+
 app.post('/api/auth/login', (req, res) => {
   const { password, clientDevice } = req.body;
   if (!password) {
     return res.status(400).json({ success: false, message: 'Kata sandi wajib diisi.' });
   }
 
-  if (password === db.uptSettings.adminPassword) {
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'client';
+  const now = Date.now();
+  const tracker = loginAttempts.get(clientIp) || { failedCount: 0, lockedUntil: 0 };
+
+  if (tracker.lockedUntil > now) {
+    const remainingSeconds = Math.ceil((tracker.lockedUntil - now) / 1000);
+    return res.status(429).json({
+      success: false,
+      message: `Terlalu banyak percobaan login gagal. Akses ditangguhkan selama ${remainingSeconds} detik demi perlindungan keamanan.`,
+    });
+  }
+
+  // Tolak mutlak percobaan kredensial default adminpassword123
+  if (password === 'adminpassword123' || password === 'admin') {
+    tracker.failedCount += 1;
+    if (tracker.failedCount >= 5) {
+      tracker.lockedUntil = now + 30000;
+    }
+    loginAttempts.set(clientIp, tracker);
+    commitDb('Percobaan Kredensial Default Ditolak', 'Autentikasi Server', 'Kredensial bawaan default diblokir sistem.', 'WARNING');
+    return res.status(401).json({ success: false, message: 'Username atau password tidak valid.' });
+  }
+
+  let isMatch = false;
+
+  // Verifikasi via salted hash
+  if (db.uptSettings.passwordHash && db.uptSettings.passwordSalt) {
+    const computedHash = hashPasswordWithSaltNode(password, db.uptSettings.passwordSalt);
+    if (computedHash === db.uptSettings.passwordHash) {
+      isMatch = true;
+    }
+  }
+
+  if (isMatch) {
+    // Reset tracker percobaan gagal
+    loginAttempts.delete(clientIp);
+
     const token = `adm-session-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     const nowIso = new Date().toISOString();
     db.activeSessions[token] = {
@@ -822,10 +999,19 @@ app.post('/api/auth/login', (req, res) => {
       lastSeen: nowIso,
       adminName: 'Administrator Kasir',
     };
+
+    // Periksa apakah kata sandi melewati batas masa berlaku
+    let isExpired = false;
+    if (db.uptSettings.passwordUpdatedAt) {
+      const updated = new Date(db.uptSettings.passwordUpdatedAt).getTime();
+      const maxAgeMs = (db.uptSettings.passwordExpiryDays || 90) * 24 * 60 * 60 * 1000;
+      isExpired = now - updated > maxAgeMs;
+    }
+
     commitDb(
       'Login Admin Berhasil',
       'Autentikasi Server',
-      `Admin login berhasil dari perangkat: ${clientDevice || 'Web Browser'}. Sesi aktif: ${token}.`,
+      `Admin login berhasil dari perangkat: ${clientDevice || 'Web Browser'}. Sesi aktif dibuat.`,
       'SUCCESS'
     );
 
@@ -835,17 +1021,32 @@ app.post('/api/auth/login', (req, res) => {
       adminName: 'Administrator Kasir',
       namaUpt: db.uptSettings.namaUpt,
       version: db.meta.version,
+      passwordExpired: isExpired,
+      passwordUpdatedAt: db.uptSettings.passwordUpdatedAt,
     });
   }
+
+  // Gagal: Tingkatkan counter percobaan gagal
+  tracker.failedCount += 1;
+  if (tracker.failedCount >= 5) {
+    tracker.lockedUntil = now + 30000;
+  }
+  loginAttempts.set(clientIp, tracker);
 
   commitDb(
     'Login Gagal',
     'Autentikasi Server',
-    `Percobaan login gagal dengan kata sandi salah dari ${clientDevice || 'Web Browser'}.`,
+    `Percobaan login gagal (${tracker.failedCount}/5) dari ${clientDevice || 'Web Browser'}.`,
     'WARNING'
   );
 
-  return res.status(401).json({ success: false, message: 'Kata sandi administrator salah!' });
+  return res.status(401).json({
+    success: false,
+    message:
+      tracker.failedCount >= 5
+        ? 'Terlalu banyak percobaan gagal. Akses ditangguhkan selama 30 detik.'
+        : 'Username atau password tidak valid.',
+  });
 });
 
 app.post('/api/auth/verify', (req, res) => {
@@ -1479,18 +1680,58 @@ app.put('/api/settings', requireAdminAuth, (req, res) => {
 
 // Change Admin Password
 app.post('/api/auth/change-password', requireAdminAuth, (req, res) => {
-  const { oldPassword, newPassword } = req.body;
-  if (oldPassword !== db.uptSettings.adminPassword) {
-    return res.status(400).json({ success: false, message: 'Kata sandi lama salah!' });
-  }
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ success: false, message: 'Kata sandi baru minimal 6 karakter!' });
+  const { oldPassword, newPassword, confirmPassword, expiryDays } = req.body;
+
+  if (confirmPassword && newPassword !== confirmPassword) {
+    return res.status(400).json({ success: false, message: 'Konfirmasi kata sandi baru tidak cocok!' });
   }
 
-  db.uptSettings.adminPassword = newPassword;
-  commitDb('Ganti Kata Sandi Admin', 'Keamanan Server', 'Kata sandi administrator berhasil diperbarui.', 'SUCCESS');
+  // Verifikasi kata sandi lama
+  let oldMatch = false;
+  if (db.uptSettings.passwordHash && db.uptSettings.passwordSalt) {
+    const computed = hashPasswordWithSaltNode(oldPassword, db.uptSettings.passwordSalt);
+    if (computed === db.uptSettings.passwordHash) {
+      oldMatch = true;
+    }
+  }
 
-  res.json({ success: true, message: 'Kata sandi administrator berhasil diperbarui!' });
+  if (!oldMatch) {
+    return res.status(400).json({ success: false, message: 'Kata sandi saat ini tidak valid!' });
+  }
+
+  const policy = validatePasswordPolicy(newPassword);
+  if (!policy.valid) {
+    return res.status(400).json({ success: false, message: policy.message });
+  }
+
+  if (newPassword === 'adminpassword123' || newPassword === 'admin') {
+    return res.status(400).json({ success: false, message: 'Dilarang menggunakan kata sandi default bawaan!' });
+  }
+
+  const newSalt = crypto.randomBytes(16).toString('hex');
+  const newHash = hashPasswordWithSaltNode(newPassword, newSalt);
+  const nowIso = new Date().toISOString();
+
+  db.uptSettings.passwordHash = newHash;
+  db.uptSettings.passwordSalt = newSalt;
+  db.uptSettings.passwordUpdatedAt = nowIso;
+  if (expiryDays && typeof expiryDays === 'number') {
+    db.uptSettings.passwordExpiryDays = expiryDays;
+  }
+  delete db.uptSettings.adminPassword;
+
+  commitDb(
+    'Ganti Kata Sandi Admin',
+    'Keamanan Server',
+    'Kata sandi administrator berhasil diperbarui dengan salted hash baru dan masa berlaku dikonfigurasi.',
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    message: 'Kata sandi administrator berhasil diperbarui!',
+    passwordUpdatedAt: nowIso,
+  });
 });
 
 // 9. FINANCIAL RESETS & CLOSINGS

@@ -20,6 +20,7 @@ import {
   generateTransactionNumber,
   exportToCsvWithBOM,
   exportToXlsx,
+  getWitaDateString,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { ReceiptModal } from '../common/ReceiptModal';
@@ -45,7 +46,7 @@ export const PembelanjaanKantin: React.FC = () => {
 
   // Form State: Nominal Belanja (Minimal Rp 500, Maksimal Rp 1.000.000)
   const [wbpId, setWbpId] = useState(sortedWbpList.length > 0 ? sortedWbpList[0].id : '');
-  const [tanggal, setTanggal] = useState(new Date().toISOString().substring(0, 10));
+  const [tanggal, setTanggal] = useState(getWitaDateString());
   const [kategori, setKategori] = useState('Belanja Makanan & Kantin');
   const [nominal, setNominal] = useState<number | ''>(500);
   const [tujuan, setTujuan] = useState('Kantin Koperasi Rutan');

@@ -22,6 +22,7 @@ import {
   formatDateTimeIndo,
   exportToCsvWithBOM,
   exportToXlsx,
+  getWitaDateString,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { OfficialLogo } from '../common/OfficialLogo';
@@ -39,7 +40,7 @@ export const LaporanKeuangan: React.FC = () => {
   } = useApp();
 
   const [filterType, setFilterType] = useState<'harian' | 'bulanan' | 'rentang'>('bulanan');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().substring(0, 10));
+  const [selectedDate, setSelectedDate] = useState(getWitaDateString());
   const [selectedMonth, setSelectedMonth] = useState('10');
   const [selectedYear, setSelectedYear] = useState('2026');
   const [startDate, setStartDate] = useState('2026-10-01');

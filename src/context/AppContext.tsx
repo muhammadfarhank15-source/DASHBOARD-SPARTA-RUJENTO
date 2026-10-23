@@ -30,6 +30,19 @@ import { apiService } from '../services/apiService';
 import { firestoreService } from '../services/firestoreService';
 import { storageService } from '../services/storageService';
 import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, User, signInWithEmailAndPassword } from '../services/firebase';
+import {
+  validatePasswordStrength,
+  hashPasswordWithSalt,
+  verifyPasswordHash,
+  checkPasswordExpired,
+  generateSecureRandomPassword,
+} from '../utils/security';
+import {
+  getWitaDateTimeString,
+  getWitaDateString,
+  getWitaTimeString,
+  getTrustedServerTime,
+} from '../utils/formatters';
 
 export type AdminTab =
   | 'dashboard'
@@ -73,6 +86,10 @@ interface AppContextType {
   loginAdmin: (password: string, email?: string) => Promise<boolean>;
   loginWithGoogle: () => Promise<boolean>;
   logoutAdmin: () => Promise<void>;
+  setupInitialAdminPassword: (newPass: string, confirmPass: string) => Promise<{ success: boolean; message: string }>;
+  verifyAdminPassword: (password: string) => Promise<boolean>;
+  isPasswordExpired: boolean;
+  passwordDaysRemaining: number;
 
   // Permanent Storage & Files
   storedFiles: StoredFileMetadata[];
@@ -152,7 +169,9 @@ interface AppContextType {
   resetPortalContent: () => Promise<void>;
   changeAdminPassword: (
     oldPass: string,
-    newPass: string
+    newPass: string,
+    confirmPass?: string,
+    expiryDays?: number
   ) => Promise<{ success: boolean; message: string }>;
   addCategory: (nama: string, jenis: 'Uang Masuk' | 'Uang Keluar') => Promise<void>;
 
@@ -197,10 +216,10 @@ const STORAGE_KEYS = {
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentPortal, setCurrentPortal] = useState<'landing' | 'public' | 'admin'>('landing');
-  const [adminLoggedIn, setAdminLoggedIn] = useState<boolean>(() => {
-    return localStorage.getItem(STORAGE_KEYS.AUTH) === 'true';
-  });
+  const [adminLoggedIn, setAdminLoggedIn] = useState<boolean>(false);
   const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
+  const [isPasswordExpired, setIsPasswordExpired] = useState<boolean>(false);
+  const [passwordDaysRemaining, setPasswordDaysRemaining] = useState<number>(90);
   const [currentUserRole, setCurrentUserRoleState] = useState<AdminRole>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.ROLE);
     return (saved as AdminRole) || 'admin';
@@ -394,16 +413,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [categories]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.AUTH, adminLoggedIn ? 'true' : 'false');
-  }, [adminLoggedIn]);
-
-  useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.FILES, JSON.stringify(storedFiles));
   }, [storedFiles]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(adminUsers));
   }, [adminUsers]);
+
+  // Pantau masa berlaku kata sandi admin (default 90 hari)
+  useEffect(() => {
+    const check = checkPasswordExpired(uptSettings.passwordUpdatedAt, uptSettings.passwordExpiryDays || 90);
+    setIsPasswordExpired(check.isExpired);
+    setPasswordDaysRemaining(check.daysRemaining);
+  }, [uptSettings.passwordUpdatedAt, uptSettings.passwordExpiryDays]);
 
   // Subscribe to permanent files from Firestore
   useEffect(() => {
@@ -430,15 +452,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .catch(() => {});
   }, []);
 
-  // Listen to Firebase Auth state
+  // Validasi Sesi Login Aman: Firebase Auth & Server Token
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (user) => {
+    let isMounted = true;
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
       if (user) {
-        setAdminLoggedIn(true);
+        if (isMounted) setAdminLoggedIn(true);
+      } else {
+        // Cek validitas sesi server jika tidak ada user Firebase
+        try {
+          const isValid = await apiService.verifySession();
+          if (isMounted) {
+            setAdminLoggedIn(isValid);
+            if (!isValid) {
+              setCurrentPortal((curr) => (curr === 'admin' ? 'landing' : curr));
+            }
+          }
+        } catch {
+          if (isMounted) {
+            setAdminLoggedIn(false);
+            setCurrentPortal((curr) => (curr === 'admin' ? 'landing' : curr));
+          }
+        }
       }
     });
-    return () => unsubAuth();
+
+    // Sinkronisasi waktu server WITA otomatis saat aplikasi dimulai
+    apiService.syncServerTime().catch(() => {});
+
+    return () => {
+      isMounted = false;
+      unsubAuth();
+    };
   }, []);
 
   // 1. ATTACH CLOUD FIRESTORE REAL-TIME onSnapshot LISTENERS
@@ -704,56 +750,153 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Helper: Refresh database
   const refreshDatabase = useCallback(async () => {
     // Firestore realtime listener automatically keeps state updated
-    setLastSyncTime(new Date().toISOString().substring(11, 19));
+    setLastSyncTime(getWitaTimeString());
   }, []);
 
   // --- AUTHENTICATION ACTIONS ---
+  const verifyAdminPassword = async (password: string): Promise<boolean> => {
+    if (!password || password === 'adminpassword123' || password === 'admin') {
+      return false;
+    }
+
+    // 1. Verifikasi via hash salted Firestore
+    if (uptSettings.passwordHash && uptSettings.passwordSalt) {
+      const match = await verifyPasswordHash(password, uptSettings.passwordHash, uptSettings.passwordSalt);
+      if (match) return true;
+    }
+
+    // 2. Verifikasi via server API
+    try {
+      const res = await apiService.loginAdmin(password);
+      if (res && res.success) return true;
+    } catch {}
+
+    return false;
+  };
+
+  const setupInitialAdminPassword = async (
+    newPass: string,
+    confirmPass: string
+  ): Promise<{ success: boolean; message: string }> => {
+    if (newPass !== confirmPass) {
+      return { success: false, message: 'Konfirmasi kata sandi tidak cocok.' };
+    }
+    const val = validatePasswordStrength(newPass);
+    if (!val.isValid) {
+      return { success: false, message: val.errors.join(', ') };
+    }
+    if (newPass === 'adminpassword123' || newPass === 'admin') {
+      return { success: false, message: 'Dilarang menggunakan kredensial default bawaan!' };
+    }
+
+    try {
+      const { hash, salt } = await hashPasswordWithSalt(newPass);
+      const nowWita = getWitaDateTimeString();
+      const updates = {
+        passwordHash: hash,
+        passwordSalt: salt,
+        passwordUpdatedAt: nowWita,
+        passwordExpiryDays: 90,
+        isPasswordInitialized: true,
+      };
+
+      setUptSettings((prev) => ({ ...prev, ...updates }));
+      await firestoreService.updateUptSettings(updates);
+      await apiService.setupInitialPassword(newPass, confirmPass);
+
+      showToast('Kata sandi administrator awal berhasil ditetapkan secara aman!', 'success');
+      await firestoreService.recordAuditLog(
+        'Inisialisasi Password Awal',
+        'Keamanan Admin',
+        'Kata sandi awal administrator berhasil dibuat dengan standar SHA-256 tersalt.',
+        'SUCCESS'
+      );
+      return { success: true, message: 'Kata sandi berhasil disimpan.' };
+    } catch (err: any) {
+      return { success: false, message: err?.message || 'Gagal menyimpan kata sandi awal.' };
+    }
+  };
+
   const loginAdmin = async (password: string, email?: string): Promise<boolean> => {
     try {
+      // Tolak tegas kredensial default bawaan yang dilarang
+      if (password === 'adminpassword123' || password === 'admin') {
+        showToast('Kredensial default telah dinonaktifkan demi keamanan. Silakan inisialisasi / gunakan akun sah.', 'error');
+        return false;
+      }
+
       // If email provided, attempt Firebase Auth Email/Password login first
       if (email && email.includes('@')) {
         try {
-          await signInWithEmailAndPassword(auth, email, password);
-          setAdminLoggedIn(true);
-          setCurrentPortal('admin');
-          showToast(`Login berhasil sebagai ${email} melalui Firebase Authentication!`, 'success');
-          return true;
+          const cred = await signInWithEmailAndPassword(auth, email, password);
+          if (cred.user) {
+            setFirebaseUser(cred.user);
+            setAdminLoggedIn(true);
+            setCurrentPortal('admin');
+            showToast(`Login berhasil sebagai ${email} melalui Firebase Authentication!`, 'success');
+            await firestoreService.recordAuditLog(
+              'Login Firebase Auth',
+              'Autentikasi',
+              `Petugas masuk via Email/Password: ${email}.`,
+              'SUCCESS',
+              cred.user.displayName || email
+            );
+            return true;
+          }
         } catch (authErr: any) {
           console.info('Firebase email auth fell back to UPT passcode:', authErr.code);
         }
       }
 
-      // Fallback verification against UPT Admin Password / Backend
-      if (password === uptSettings.adminPassword) {
-        setAdminLoggedIn(true);
-        setCurrentPortal('admin');
-        showToast('Login berhasil! Sesi admin aktif terhubung ke Cloud Firestore.', 'success');
-        await firestoreService.recordAuditLog(
-          'Login Admin UPT',
-          'Autentikasi',
-          'Admin berhasil masuk menggunakan kredensial UPT terverifikasi.',
-          'SUCCESS'
-        );
-        return true;
-      } else {
-        // Also try server API fallback if available
-        try {
-          const res = await apiService.loginAdmin(password);
-          if (res && res.success) {
-            setAdminLoggedIn(true);
-            setCurrentPortal('admin');
-            showToast('Login berhasil! Sesi admin aktif.', 'success');
-            return true;
+      // 1. Verifikasi via Firestore salted hash
+      if (uptSettings.passwordHash && uptSettings.passwordSalt) {
+        const isMatch = await verifyPasswordHash(password, uptSettings.passwordHash, uptSettings.passwordSalt);
+        if (isMatch) {
+          setAdminLoggedIn(true);
+          setCurrentPortal('admin');
+
+          const exp = checkPasswordExpired(uptSettings.passwordUpdatedAt, uptSettings.passwordExpiryDays || 90);
+          if (exp.isExpired) {
+            showToast('Peringatan: Masa berlaku kata sandi telah habis. Harap perbarui kata sandi di menu Pengaturan.', 'warning');
+          } else {
+            showToast('Login berhasil! Sesi admin aktif terhubung ke Cloud Firestore.', 'success');
           }
-        } catch {
-          // Non-fatal if server API is unavailable
+
+          await firestoreService.recordAuditLog(
+            'Login Admin UPT',
+            'Autentikasi',
+            'Admin berhasil masuk menggunakan kredensial UPT terverifikasi.',
+            'SUCCESS'
+          );
+          apiService.loginAdmin(password).catch(() => {});
+          return true;
         }
       }
 
-      showToast('Kata sandi administrator salah!', 'error');
+      // 2. Verifikasi via backend Server API fallback
+      try {
+        const res = await apiService.loginAdmin(password);
+        if (res && res.success) {
+          setAdminLoggedIn(true);
+          setCurrentPortal('admin');
+          if (res.passwordExpired) {
+            showToast('Peringatan: Masa berlaku kata sandi telah habis. Harap segera perbarui kata sandi.', 'warning');
+          } else {
+            showToast('Login berhasil! Sesi admin aktif.', 'success');
+          }
+          return true;
+        } else if (res && res.message && res.message.includes('Akses ditangguhkan')) {
+          showToast(res.message, 'error');
+          return false;
+        }
+      } catch {
+        // Fallback
+      }
+
+      showToast('Username atau password tidak valid.', 'error');
       return false;
     } catch (err: unknown) {
-      showToast('Terjadi kesalahan saat verifikasi login.', 'error');
+      showToast('Username atau password tidak valid.', 'error');
       return false;
     }
   };
@@ -792,10 +935,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch {
       // Ignore
     }
+    await apiService.logoutAdmin().catch(() => {});
     setAdminLoggedIn(false);
     setFirebaseUser(null);
     setCurrentPortal('landing');
     setFormDrafts({});
+    showToast('Sesi administrator berhasil ditutup dengan aman.', 'info');
     setAutosaveState({
       status: 'idle',
       statusText: 'Sesi ditutup',
@@ -1318,8 +1463,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     periodeNama: string,
     options: { resetMasuk: boolean; resetKeluar: boolean; resetSaldo: boolean }
   ): Promise<{ success: boolean; message: string }> => {
-    if (adminPasswordConfirm !== uptSettings.adminPassword) {
-      showToast('Konfirmasi kata sandi administrator salah!', 'error');
+    const isPassValid = await verifyAdminPassword(adminPasswordConfirm);
+    if (!isPassValid) {
+      showToast('Konfirmasi kata sandi administrator tidak valid!', 'error');
       return { success: false, message: 'Kata sandi tidak sesuai!' };
     }
 
@@ -1335,7 +1481,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         totalMasuk,
         totalKeluar,
         saldoAkhir: totalSaldo,
-        tanggalTutupBuku: new Date().toISOString().replace('T', ' ').substring(0, 19),
+        tanggalTutupBuku: getWitaDateTimeString(),
         petugasTutupBuku: uptSettings.bendaharaNama || 'Bendahara Rutan',
       };
 
@@ -1434,18 +1580,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const changeAdminPassword = async (
     oldPass: string,
-    newPass: string
+    newPass: string,
+    confirmPass?: string,
+    expiryDays?: number
   ): Promise<{ success: boolean; message: string }> => {
-    if (oldPass !== uptSettings.adminPassword) {
-      showToast('Kata sandi lama tidak sesuai!', 'error');
-      return { success: false, message: 'Kata sandi lama salah.' };
+    if (confirmPass && newPass !== confirmPass) {
+      showToast('Konfirmasi kata sandi baru tidak cocok!', 'error');
+      return { success: false, message: 'Konfirmasi kata sandi baru tidak cocok.' };
+    }
+
+    const isOldValid = await verifyAdminPassword(oldPass);
+    if (!isOldValid) {
+      showToast('Kata sandi saat ini tidak valid!', 'error');
+      return { success: false, message: 'Kata sandi saat ini tidak valid.' };
+    }
+
+    const val = validatePasswordStrength(newPass);
+    if (!val.isValid) {
+      const msg = `Kata sandi baru tidak memenuhi syarat: ${val.errors.join(', ')}`;
+      showToast(msg, 'error');
+      return { success: false, message: msg };
+    }
+
+    if (newPass === 'adminpassword123' || newPass === 'admin') {
+      showToast('Dilarang menggunakan kredensial default bawaan!', 'error');
+      return { success: false, message: 'Dilarang menggunakan kredensial default bawaan.' };
     }
 
     try {
-      setUptSettings((prev) => ({ ...prev, adminPassword: newPass }));
-      await firestoreService.updateUptSettings({ adminPassword: newPass });
-      apiService.changePassword(oldPass, newPass).catch(() => {});
+      const { hash, salt } = await hashPasswordWithSalt(newPass);
+      const nowWita = getWitaDateTimeString();
+      const updates: Partial<UptSettings> = {
+        passwordHash: hash,
+        passwordSalt: salt,
+        passwordUpdatedAt: nowWita,
+        passwordExpiryDays: expiryDays || uptSettings.passwordExpiryDays || 90,
+        isPasswordInitialized: true,
+      };
+
+      setUptSettings((prev) => ({ ...prev, ...updates }));
+      await firestoreService.updateUptSettings(updates);
+      await apiService.changePassword(oldPass, newPass, confirmPass, expiryDays);
       showToast('Kata sandi administrator berhasil diperbarui di Cloud Firestore!', 'success');
+      await firestoreService.recordAuditLog(
+        'Ganti Kata Sandi Admin',
+        'Keamanan Admin',
+        'Kata sandi administrator berhasil diperbarui dengan salted hash baru.',
+        'SUCCESS'
+      );
       return { success: true, message: 'Kata sandi berhasil diubah.' };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1600,6 +1782,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const replacePermanentFile = async (
+    targetFile: StoredFileMetadata,
+    newFile: File | Blob,
+    newFileName?: string,
+    metadataUpdates?: { keterangan?: string; wbpId?: string; wbpNama?: string },
+    onProgress?: (percent: number, bytesTransferred: number, totalBytes: number) => void
+  ): Promise<StoredFileMetadata> => {
+    if (!canDeleteFiles) {
+      showToast('Akses Ditolak: Hanya Administrator yang berwenang mengganti file.', 'error');
+      throw new Error('Akses Ditolak: Hanya Administrator yang berwenang mengganti file.');
+    }
+    try {
+      const uploader = {
+        uid: firebaseUser?.uid,
+        nama: firebaseUser?.displayName || firebaseUser?.email || 'Administrator Kasir',
+        email: firebaseUser?.email || undefined,
+        role: currentUserRole,
+      };
+      const res = await storageService.replacePermanentFile(
+        targetFile,
+        newFile,
+        newFileName || targetFile.namaFile,
+        uploader,
+        metadataUpdates,
+        onProgress
+      );
+      setStoredFiles((prev) => [res, ...prev.filter((f) => f.id !== targetFile.id && f.id !== res.id)]);
+      showToast(`File "${newFileName || targetFile.namaFile}" berhasil diperbarui permanen!`, 'success');
+      return res;
+    } catch (err: any) {
+      const msg = err?.message || 'Gagal memperbarui file.';
+      showToast(msg, 'error');
+      throw err;
+    }
+  };
+
   const updateUserRole = async (uid: string, role: AdminRole): Promise<boolean> => {
     if (!canManageSettings) {
       showToast('Akses Ditolak: Hanya Administrator yang dapat mengubah hak akses.', 'error');
@@ -1639,12 +1857,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateUserRole,
         storedFiles,
         uploadPermanentFile,
+        replacePermanentFile,
         deletePermanentFile,
         activeAdminTab,
         setActiveAdminTab,
         loginAdmin,
         loginWithGoogle,
         logoutAdmin,
+        setupInitialAdminPassword,
+        verifyAdminPassword,
+        isPasswordExpired,
+        passwordDaysRemaining,
         wbpList,
         transactions,
         monthlyReports,

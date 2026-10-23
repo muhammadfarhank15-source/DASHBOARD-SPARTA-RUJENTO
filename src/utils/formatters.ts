@@ -1,6 +1,62 @@
 /**
  * Helper formatters and CSV exporter tailored for Indonesian Rupiah & Excel
+ * Terstandarisasi Zona Waktu Indonesia Tengah (WITA - Asia/Makassar, UTC+08:00)
  */
+
+export const TIMEZONE_WITA = 'Asia/Makassar';
+
+// Sinkronisasi selisih waktu klien terhadap server tepercaya (mencegah jam HP/laptop keliru)
+let serverTimeDriftMs = 0;
+let hasSyncedServerTime = false;
+
+export function setServerTimeSync(serverTimestamp: number) {
+  serverTimeDriftMs = serverTimestamp - Date.now();
+  hasSyncedServerTime = true;
+}
+
+export function getTrustedServerTime(): Date {
+  return new Date(Date.now() + serverTimeDriftMs);
+}
+
+/**
+ * Parsing tanggal secara aman tanpa duplikasi penambahan offset 8 jam.
+ * Mendukung format ISO UTC, format database "YYYY-MM-DD HH:mm:ss", dan Date objects.
+ */
+export function parseDateSafe(input: string | Date | number | undefined | null): Date | null {
+  if (!input) return null;
+  if (input instanceof Date) return isNaN(input.getTime()) ? null : input;
+  if (typeof input === 'number') {
+    const d = new Date(input);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const str = String(input).trim();
+  if (!str) return null;
+
+  // Jika format ISO standar dengan penanda timezone (Z atau + / -)
+  if (str.includes('Z') || /[+-]\d{2}:\d{2}$/.test(str)) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Jika format lokal "YYYY-MM-DD HH:mm:ss" atau "YYYY-MM-DDTHH:mm:ss" yang disimpan sebagai waktu lokal WITA
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?/.test(str)) {
+    // Treat as WITA (+08:00) agar konversi ke UTC tepat dan tidak tergeser zona waktu perangkat
+    const normalized = str.replace(' ', 'T');
+    const withTz = normalized.length === 16 ? `${normalized}:00+08:00` : `${normalized}+08:00`;
+    const d = new Date(withTz);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Jika format tanggal saja "YYYY-MM-DD"
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const d = new Date(`${str}T00:00:00+08:00`);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  const fallback = new Date(str);
+  return isNaN(fallback.getTime()) ? null : fallback;
+}
 
 export function formatRupiah(amount: number): string {
   const safeAmount = isNaN(amount) ? 0 : amount;
@@ -12,48 +68,96 @@ export function formatRupiah(amount: number): string {
   }).format(safeAmount);
 }
 
-export function formatDateIndo(dateStr: string): string {
+/**
+ * Menghasilkan tanggal hari ini atau tanggal tertentu dalam format YYYY-MM-DD sesuai zona waktu WITA
+ */
+export function getWitaDateString(dateInput?: Date | string | number): string {
+  const date = dateInput ? parseDateSafe(dateInput) || getTrustedServerTime() : getTrustedServerTime();
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIMEZONE_WITA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+/**
+ * Menghasilkan jam sekarang atau jam tertentu dalam format HH:mm:ss sesuai zona waktu WITA
+ */
+export function getWitaTimeString(dateInput?: Date | string | number): string {
+  const date = dateInput ? parseDateSafe(dateInput) || getTrustedServerTime() : getTrustedServerTime();
+  return new Intl.DateTimeFormat('id-ID', {
+    timeZone: TIMEZONE_WITA,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date).replace(/\./g, ':');
+}
+
+/**
+ * Menghasilkan tanggal & waktu dalam format "YYYY-MM-DD HH:mm:ss" sesuai zona waktu WITA
+ */
+export function getWitaDateTimeString(dateInput?: Date | string | number): string {
+  const date = dateInput ? parseDateSafe(dateInput) || getTrustedServerTime() : getTrustedServerTime();
+  const datePart = getWitaDateString(date);
+  const timePart = getWitaTimeString(date);
+  return `${datePart} ${timePart}`;
+}
+
+/**
+ * Format tanggal Indonesia dalam zona waktu WITA (contoh: "23 Oktober 2026")
+ */
+export function formatDateIndo(dateStr: string | Date | number | undefined | null): string {
   if (!dateStr) return '-';
   try {
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return dateStr;
+    const date = parseDateSafe(dateStr);
+    if (!date) return String(dateStr);
     return new Intl.DateTimeFormat('id-ID', {
+      timeZone: TIMEZONE_WITA,
       day: 'numeric',
       month: 'long',
       year: 'numeric',
     }).format(date);
   } catch {
-    return dateStr;
+    return String(dateStr);
   }
 }
 
-export function formatDateTimeIndo(dateTimeStr: string): string {
+/**
+ * Format tanggal & waktu lengkap dalam zona waktu WITA (Asia/Makassar, UTC+08:00)
+ * Format standar konsisten: "23/10/2026 15.38.00 WITA"
+ */
+export function formatDateTimeIndo(dateTimeStr: string | Date | number | undefined | null): string {
   if (!dateTimeStr) return '-';
   try {
-    const date = new Date(dateTimeStr);
-    if (isNaN(date.getTime())) return dateTimeStr;
-    return new Intl.DateTimeFormat('id-ID', {
-      day: 'numeric',
-      month: 'short',
+    const date = parseDateSafe(dateTimeStr);
+    if (!date) return String(dateTimeStr);
+
+    const formatted = new Intl.DateTimeFormat('id-ID', {
+      timeZone: TIMEZONE_WITA,
+      day: '2-digit',
+      month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
       hour12: false,
     }).format(date);
+
+    // Hasil id-ID biasanya "23/10/2026, 15.38.00" -> ubah menjadi "23/10/2026 15.38.00 WITA"
+    const cleaned = formatted.replace(',', '').trim();
+    return cleaned.endsWith('WITA') ? cleaned : `${cleaned} WITA`;
   } catch {
-    return dateTimeStr;
+    return String(dateTimeStr);
   }
 }
 
 export function generateTransactionNumber(jenis: 'Uang Masuk' | 'Uang Keluar'): string {
   const prefix = jenis === 'Uang Masuk' ? 'TR-MSK' : 'TR-KLR';
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
+  const dateCode = getWitaDateString().replace(/-/g, '');
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  return `${prefix}-${year}${month}${day}-${randomSuffix}`;
+  return `${prefix}-${dateCode}-${randomSuffix}`;
 }
 
 import * as XLSX from 'xlsx';

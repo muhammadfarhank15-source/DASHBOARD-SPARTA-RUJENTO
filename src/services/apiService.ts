@@ -9,6 +9,7 @@ import {
   BulkImportResult,
   PublicPortalContent,
 } from '../types';
+import { setServerTimeSync } from '../utils/formatters';
 
 const TOKEN_STORAGE_KEY = 'sparta_rujento_auth_token';
 const OFFLINE_QUEUE_KEY = 'sparta_rujento_offline_queue_v1';
@@ -110,8 +111,64 @@ class ApiService {
     }
   }
 
-  // 3. Login Admin
-  public async loginAdmin(password: string): Promise<{ success: boolean; token?: string; message?: string; version?: number }> {
+  // 2.5 Server Time Synchronization (WITA)
+  public async syncServerTime(): Promise<number> {
+    try {
+      const res = await fetch('/api/time');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.timestamp) {
+          setServerTimeSync(data.timestamp);
+          return data.timestamp;
+        }
+      }
+    } catch {}
+    return Date.now();
+  }
+
+  // 3. Status Inisialisasi & Password Admin
+  public async getAuthStatus(): Promise<{
+    isPasswordInitialized: boolean;
+    passwordUpdatedAt?: string;
+    passwordExpiryDays?: number;
+    isExpired?: boolean;
+    daysRemaining?: number;
+  }> {
+    try {
+      const res = await fetch('/api/auth/status');
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {}
+    return { isPasswordInitialized: false };
+  }
+
+  // 3.1 Setup Kata Sandi Awal (One-time)
+  public async setupInitialPassword(newPassword: string, confirmPassword: string): Promise<{ success: boolean; message: string }> {
+    try {
+      const res = await fetch('/api/auth/setup-initial-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword, confirmPassword }),
+      });
+      const data = await this.safeJson(res);
+      return data || { success: false, message: 'Server tidak merespons.' };
+    } catch {
+      return { success: false, message: 'Gagal menghubungkan ke server.' };
+    }
+  }
+
+  // 3.2 Login Admin
+  public async loginAdmin(
+    password: string
+  ): Promise<{
+    success: boolean;
+    token?: string;
+    message?: string;
+    passwordExpired?: boolean;
+    passwordUpdatedAt?: string;
+    version?: number;
+  }> {
     const device = `${navigator.userAgent.includes('Mobile') ? 'Smartphone/Tablet' : 'Komputer Desktop'} (${navigator.platform || 'OS'})`;
     try {
       const res = await fetch('/api/auth/login', {
@@ -350,17 +407,22 @@ class ApiService {
     }
   }
 
-  public async changePassword(oldPassword: string, newPassword: string): Promise<{ success: boolean; message: string }> {
+  public async changePassword(
+    oldPassword: string,
+    newPassword: string,
+    confirmPassword?: string,
+    expiryDays?: number
+  ): Promise<{ success: boolean; message: string; passwordUpdatedAt?: string }> {
     try {
       const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers: this.getHeaders(),
-        body: JSON.stringify({ oldPassword, newPassword }),
+        body: JSON.stringify({ oldPassword, newPassword, confirmPassword, expiryDays }),
       });
       const data = await this.safeJson(res);
       return data || { success: true, message: 'Kata sandi berhasil diperbarui.' };
     } catch {
-      return { success: true, message: 'Kata sandi berhasil diperbarui.' };
+      return { success: false, message: 'Gagal menghubungi server untuk ganti kata sandi.' };
     }
   }
 

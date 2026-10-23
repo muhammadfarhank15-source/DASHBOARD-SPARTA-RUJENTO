@@ -22,6 +22,7 @@ import {
   generateTransactionNumber,
   exportToCsvWithBOM,
   exportToXlsx,
+  getWitaDateString,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../common/ConfirmModal';
 import { ReceiptModal } from '../common/ReceiptModal';
@@ -47,7 +48,7 @@ export const TitipanMasuk: React.FC = () => {
 
   // Form State
   const [wbpId, setWbpId] = useState(sortedWbpList.length > 0 ? sortedWbpList[0].id : '');
-  const [tanggal, setTanggal] = useState(new Date().toISOString().substring(0, 10));
+  const [tanggal, setTanggal] = useState(getWitaDateString());
   const [kategori, setKategori] = useState('Setoran Tunai Keluarga');
   const [nominal, setNominal] = useState<number | ''>(500000);
   const [sumber, setSumber] = useState('Keluarga (Ibu/Istri)');

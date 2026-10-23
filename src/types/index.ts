@@ -225,7 +225,12 @@ export interface UptSettings {
   bendaharaNama: string;
   bendaharaNip: string;
   logoUrl: string;
-  adminPassword: string; // Default adminpassword123
+  adminPassword?: string; // Dipertahankan opsional untuk kompatibilitas migrasi
+  passwordHash?: string; // Hash SHA-256 tersalt (tidak disimpan teks biasa)
+  passwordSalt?: string; // Salt acak unik per instansi
+  passwordUpdatedAt?: string; // Waktu terakhir kata sandi diganti (ISO / WITA)
+  passwordExpiryDays?: number; // Masa berlaku kata sandi (misal: 90 hari)
+  isPasswordInitialized?: boolean; // Status apakah password aman pertama telah disetup
   googleSheetsUrl: string;
   syncStatus: 'Tersambung' | 'Terputus' | 'Lokal Mode';
   lastSyncTime: string;
