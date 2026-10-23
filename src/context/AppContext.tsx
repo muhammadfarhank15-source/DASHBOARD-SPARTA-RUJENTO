@@ -80,7 +80,15 @@ interface AppContextType {
     file: File | Blob,
     fileName: string,
     category: StoredFileCategory,
-    metadata?: { wbpId?: string; wbpNama?: string; keterangan?: string }
+    metadata?: { wbpId?: string; wbpNama?: string; keterangan?: string },
+    onProgress?: (percent: number, bytesTransferred: number, totalBytes: number) => void
+  ) => Promise<StoredFileMetadata>;
+  replacePermanentFile: (
+    targetFile: StoredFileMetadata,
+    newFile: File | Blob,
+    newFileName?: string,
+    metadataUpdates?: { keterangan?: string; wbpId?: string; wbpNama?: string },
+    onProgress?: (percent: number, bytesTransferred: number, totalBytes: number) => void
   ) => Promise<StoredFileMetadata>;
   deletePermanentFile: (fileMetadata: StoredFileMetadata) => Promise<boolean>;
 
